@@ -12,13 +12,13 @@ const BYTE_MASK: [u64; 8] = [
 ];
 
 #[derive(Debug, PartialEq)]
-struct FPCCompressedBlock {
+pub struct FPCCompressedBlock {
     num_bytes_encoded: usize,
     encoding: Vec<u8>,
     residual: Vec<u8>,
 }
 
-fn compress(table_size: u64, fp_values: &Vec<f64>) -> FPCCompressedBlock {
+pub fn compress(table_size: u64, fp_values: &Vec<f64>) -> FPCCompressedBlock {
     if fp_values.is_empty() {
         return FPCCompressedBlock {
             num_bytes_encoded: 0,
@@ -84,7 +84,7 @@ fn compress(table_size: u64, fp_values: &Vec<f64>) -> FPCCompressedBlock {
     }
 }
 
-fn decompress(table_size: u64, blk: &FPCCompressedBlock) -> Vec<f64> {
+pub fn decompress(table_size: u64, blk: &FPCCompressedBlock) -> Vec<f64> {
     if blk.num_bytes_encoded == 0 {
         return vec![];
     }
