@@ -19,6 +19,13 @@ struct FPCCompressedBlock {
 }
 
 fn compress(table_size: u64, fp_values: &Vec<f64>) -> FPCCompressedBlock {
+    if fp_values.is_empty() {
+        return FPCCompressedBlock {
+            num_bytes_encoded: 0,
+            encoding: vec![],
+            residual: vec![],
+        }
+    }
     if table_size == 0 || (table_size & (table_size-1)) != 0 {
         panic!("table size must be a multiple of 2 and preferably fit in L1 cache");
     }
@@ -42,7 +49,7 @@ fn compress(table_size: u64, fp_values: &Vec<f64>) -> FPCCompressedBlock {
 
         let dfcm_prediction = dfcm[dfcm_hash as usize].wrapping_add(last_value);
         dfcm[dfcm_hash as usize] = true_value.wrapping_sub(last_value);
-        dfcm_hash = ((dfcm_hash << 2) ^ ((true_value - last_value) >> 40)) & (table_size - 1);
+        dfcm_hash = ((dfcm_hash << 2) ^ (true_value.wrapping_sub(last_value) >> 40)) & (table_size - 1);
         last_value = true_value;
 
         let fcm_diff = fcm_prediction ^ true_value;
@@ -78,6 +85,9 @@ fn compress(table_size: u64, fp_values: &Vec<f64>) -> FPCCompressedBlock {
 }
 
 fn decompress(table_size: u64, blk: &FPCCompressedBlock) -> Vec<f64> {
+    if blk.num_bytes_encoded == 0 {
+        return vec![];
+    }
     let mut res = Vec::with_capacity(blk.num_bytes_encoded);
 
     let mut last_value: u64 = 0;
@@ -159,7 +169,14 @@ fn decompress(table_size: u64, blk: &FPCCompressedBlock) -> Vec<f64> {
 
 #[cfg(test)]
 mod compress_decompress_test {
+    use quickcheck_macros::quickcheck;
+
     use super::*;
+
+    fn bitwise_compare_vec_f64(a: &Vec<f64>, b: &Vec<f64>) -> bool {
+        a.len() == b.len() &&
+            a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
+    }
 
     #[test]
     fn test_compress_even_number_of_zeros() {
@@ -171,7 +188,7 @@ mod compress_decompress_test {
             residual: vec![],
         });
         let decompressed = decompress(DEFAULT_TABLE_SIZE, &compressed);
-        assert_eq!(decompressed, vec![0.0; 16]);
+        assert!(bitwise_compare_vec_f64(&decompressed, &vals));
     }
 
     #[test]
@@ -187,7 +204,7 @@ mod compress_decompress_test {
             residual: vec![],
         });
         let decompressed = decompress(DEFAULT_TABLE_SIZE, &compressed);
-        assert_eq!(decompressed, vec![0.0; 15]);
+        assert!(bitwise_compare_vec_f64(&decompressed, &vals));
     }
 
     #[test]
@@ -203,7 +220,7 @@ mod compress_decompress_test {
             residual: vec![63, 240, 0, 0, 0, 0, 0, 0, 63, 240, 0, 0, 0, 0, 0, 0],
         });
         let decompressed = decompress(DEFAULT_TABLE_SIZE, &compressed);
-        assert_eq!(decompressed, vals);
+        assert!(bitwise_compare_vec_f64(&decompressed, &vals));
     }
 
     #[test]
@@ -219,6 +236,37 @@ mod compress_decompress_test {
             residual: vec![191, 240, 0, 0, 0, 0, 0, 0, 191, 240, 0, 0, 0, 0, 0, 0],
         });
         let decompressed = decompress(DEFAULT_TABLE_SIZE, &compressed);
-        assert_eq!(decompressed, vals);
+        assert!(bitwise_compare_vec_f64(&decompressed, &vals));
+    }
+
+    #[test]
+    fn test_compress_nan_and_infinities() {
+        let vals: Vec<f64> = vec![f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+        let compressed = compress(DEFAULT_TABLE_SIZE, &vals);
+        assert_eq!(compressed, FPCCompressedBlock{
+            num_bytes_encoded: 3,
+            encoding: vec![8, 0],
+            residual: vec![
+                127, 248, 0, 0, 0, 0, 0, 0,
+                127, 240, 0, 0, 0, 0, 0, 0,
+                128, 24, 0, 0, 0, 0, 0, 0,
+            ],
+        });
+        let decompressed = decompress(DEFAULT_TABLE_SIZE, &compressed);
+        assert!(bitwise_compare_vec_f64(&decompressed, &vals));
+    }
+
+    #[quickcheck]
+    fn compression_must_be_reversible(to_compress: Vec<f64>) -> bool {
+        let compressed = compress(DEFAULT_TABLE_SIZE, &to_compress);
+        let decompressed = decompress(DEFAULT_TABLE_SIZE, &compressed);
+        bitwise_compare_vec_f64(&to_compress, &decompressed)
+    }
+
+    #[quickcheck]
+    fn compression_must_output_block_with_proper_header_and_leading_zero_encoding(to_compress: Vec<f64>) -> bool {
+        let compressed = compress(DEFAULT_TABLE_SIZE, &to_compress);
+        compressed.num_bytes_encoded == to_compress.len() &&
+            compressed.encoding.len() == (to_compress.len()-1)/2 + 1
     }
 }
