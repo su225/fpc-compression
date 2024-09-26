@@ -19,12 +19,25 @@ pub struct FPCCompressedBlock {
 }
 
 pub fn compress(table_size: u64, fp_values: &Vec<f64>) -> FPCCompressedBlock {
+    let mut encoding = vec![0_u8; (fp_values.len() + 1)/2];
+    let mut residual = Vec::with_capacity((size_of::<f64>() * fp_values.len())/4);
+    compress_into(table_size, fp_values, &mut encoding, &mut residual);
+    FPCCompressedBlock { num_bytes_encoded: fp_values.len(), encoding, residual }
+}
+
+pub fn decompress(table_size: u64, blk: &FPCCompressedBlock) -> Vec<f64> {
+    let mut res = Vec::with_capacity(blk.num_bytes_encoded);
+    decompress_into(table_size, blk, &mut res);
+    res
+}
+
+pub fn compress_into(
+    table_size: u64, fp_values: &Vec<f64>,
+    encoding: &mut Vec<u8>,
+    residual: &mut Vec<u8>,
+) {
     if fp_values.is_empty() {
-        return FPCCompressedBlock {
-            num_bytes_encoded: 0,
-            encoding: vec![],
-            residual: vec![],
-        }
+        return;
     }
     if table_size == 0 || (table_size & (table_size-1)) != 0 {
         panic!("table size must be a multiple of 2 and preferably fit in L1 cache");
@@ -38,8 +51,6 @@ pub fn compress(table_size: u64, fp_values: &Vec<f64>) -> FPCCompressedBlock {
     let mut dfcm_hash: u64 = 0;
     let mut dfcm: Vec<u64> = vec![0_u64; table_size as usize];
 
-    let mut encoding = vec![0_u8; (fp_values.len()-1)/2+1];
-    let mut residual = vec![];
     for i in 0..fp_values.len() {
         true_value = fp_values[i].to_bits();
 
@@ -77,18 +88,16 @@ pub fn compress(table_size: u64, fp_values: &Vec<f64>) -> FPCCompressedBlock {
         let shift = if i & 1 == 0 { 4 } else { 0 };
         encoding[i>>1] = encoding[i>>1] | (mask << shift);
     }
-    FPCCompressedBlock {
-        num_bytes_encoded: fp_values.len(),
-        encoding,
-        residual,
-    }
 }
 
-pub fn decompress(table_size: u64, blk: &FPCCompressedBlock) -> Vec<f64> {
+pub fn decompress_into(
+    table_size: u64,
+    blk: &FPCCompressedBlock,
+    res: &mut Vec<f64>,
+) {
     if blk.num_bytes_encoded == 0 {
-        return vec![];
+        return;
     }
-    let mut res = Vec::with_capacity(blk.num_bytes_encoded);
 
     let mut last_value: u64 = 0;
     let mut fcm_hash: u64 = 0;
@@ -164,7 +173,6 @@ pub fn decompress(table_size: u64, blk: &FPCCompressedBlock) -> Vec<f64> {
 
         encoded_index += 1;
     }
-    res
 }
 
 #[cfg(test)]
@@ -267,6 +275,6 @@ mod compress_decompress_test {
     fn compression_must_output_block_with_proper_header_and_leading_zero_encoding(to_compress: Vec<f64>) -> bool {
         let compressed = compress(DEFAULT_TABLE_SIZE, &to_compress);
         compressed.num_bytes_encoded == to_compress.len() &&
-            compressed.encoding.len() == (to_compress.len()-1)/2 + 1
+            compressed.encoding.len() == (to_compress.len()+1)/2
     }
 }
